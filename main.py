@@ -116,7 +116,41 @@ async def analyze_notification(p: NotificationPayload):
 @app.get("/api/v1/analytics/overview")
 async def get_analytics():
     safe = analytics_db["total_scans"] - analytics_db["threats_detected"]
-    return {"success": True, "data": {"total_scans": analytics_db["total_scans"], "threats_detected": analytics_db["threats_detected"], "threats_blocked": analytics_db["threats_detected"], "safe_messages": safe, "recent_activity": analytics_db["recent_scans"][:10]}}
+    
+    # Calculate threat breakdown for pie chart
+    high_threats = len([s for s in analytics_db["recent_scans"] if s.get("threat_level") == "HIGH"])
+    medium_threats = len([s for s in analytics_db["recent_scans"] if s.get("threat_level") == "MEDIUM"])
+    low_threats = len([s for s in analytics_db["recent_scans"] if s.get("threat_level") == "LOW"])
+    
+    # Calculate severity breakdown
+    critical = len([s for s in analytics_db["recent_scans"] if s.get("severity") == "critical"])
+    high_sev = len([s for s in analytics_db["recent_scans"] if s.get("severity") == "high"])
+    medium_sev = len([s for s in analytics_db["recent_scans"] if s.get("severity") == "medium"])
+    low_sev = len([s for s in analytics_db["recent_scans"] if s.get("severity") == "low"])
+    
+    return {"success": True, "data": {"total_scans": analytics_db["total_scans"], "threats_detected": analytics_db["threats_detected"], "threats_blocked": analytics_db["threats_detected"], "safe_messages": safe, "detection_rate": round((analytics_db["threats_detected"] / max(analytics_db["total_scans"], 1)) * 100, 1), "threat_breakdown": {"high": high_threats, "medium": medium_threats, "low": low_threats}, "severity_breakdown": {"critical": critical, "high": high_sev, "medium": medium_sev, "low": low_sev}, "recent_activity": analytics_db["recent_scans"][:10]}}
+
+@app.get("/api/v1/analytics/stats")
+async def get_stats():
+    """Detailed stats for graphs and charts"""
+    from collections import Counter
+    
+    # Top keywords detected
+    all_keywords = []
+    for scan in analytics_db["recent_scans"]:
+        all_keywords.extend(scan.get("keywords", []))
+    keyword_counts = Counter(all_keywords).most_common(10)
+    
+    # Hourly activity (simplified - in production use proper time grouping)
+    hourly_data = [{"hour": i, "scans": 0, "threats": 0} for i in range(24)]
+    for scan in analytics_db["recent_scans"]:
+        try:
+            hour = int(scan["timestamp"].split("T")[1].split(":")[0])
+            hourly_data[hour]["scans"] += 1
+            if scan["is_harassment"]: hourly_data[hour]["threats"] += 1
+        except: pass
+    
+    return {"success": True, "data": {"hourly_activity": hourly_data, "top_keywords": [{"keyword": k, "count": c} for k, c in keyword_counts], "total_scans": analytics_db["total_scans"], "threat_percentage": round((analytics_db["threats_detected"] / max(analytics_db["total_scans"], 1)) * 100, 1)}}
 
 if __name__ == "__main__":
     print("\n" + "="*60)
