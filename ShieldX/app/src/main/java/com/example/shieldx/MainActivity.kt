@@ -21,19 +21,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-// Use the service helper for permission checks
+import com.example.shieldx.service.ShieldXNotificationListener
 import com.example.shieldx.api.ConnectionTester
-import com.example.shieldx.utils.SharedPref
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
-    
-    private var isWaitingForListenerPermission = false
-    private lateinit var sharedPref: SharedPref
     
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -48,15 +40,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Initialize SharedPref
-        sharedPref = SharedPref.getInstance(this)
-        
-        // Check if setup is already completed and user should go directly to login
-        if (sharedPref.isPermissionSetupCompleted() && isNotificationListenerEnabled()) {
-            redirectToLogin()
-            return
-        }
-        
         setContent {
             ShieldXTheme {
                 Surface(
@@ -67,72 +50,10 @@ class MainActivity : ComponentActivity() {
                         onRequestNotificationPermission = { requestNotificationPermission() },
                         onRequestListenerPermission = { requestNotificationListenerPermission() },
                         isNotificationListenerEnabled = { isNotificationListenerEnabled() },
-                        onTestConnection = { testBackendConnection() },
-                        onOpenDashboard = { openDashboard() },
-                        onTestRedirect = { testRedirectToLogin() }
+                        onTestConnection = { testBackendConnection() }
                     )
                 }
             }
-        }
-    }
-    
-    override fun onResume() {
-        super.onResume()
-        
-        // Debug logging
-        android.util.Log.d("MainActivity", "onResume called - waiting: $isWaitingForListenerPermission, enabled: ${isNotificationListenerEnabled()}")
-        android.util.Log.d("MainActivity", "Setup completed status: ${sharedPref.isPermissionSetupCompleted()}")
-        
-        // Check if user just returned from notification settings
-        if (isWaitingForListenerPermission) {
-            isWaitingForListenerPermission = false
-            
-            if (isNotificationListenerEnabled()) {
-                // Permission granted! Mark setup as completed and redirect to login
-                android.util.Log.d("MainActivity", "Permission granted! Setting setup completed and redirecting to login...")
-                sharedPref.setPermissionSetupCompleted(true)
-                android.util.Log.d("MainActivity", "Setup completed status after saving: ${sharedPref.isPermissionSetupCompleted()}")
-                redirectToLogin()
-            } else {
-                android.util.Log.d("MainActivity", "Permission still not granted")
-                Toast.makeText(
-                    this,
-                    "ShieldX needs notification access to protect you. Please try again.",
-                    Toast.LENGTH_LONG
-                ).show()
-            }
-        } else {
-            // Also check if permission was granted but we missed it (edge case)
-            if (isNotificationListenerEnabled() && !sharedPref.isPermissionSetupCompleted()) {
-                android.util.Log.d("MainActivity", "Permission already enabled but setup not marked complete. Fixing...")
-                sharedPref.setPermissionSetupCompleted(true)
-                redirectToLogin()
-            }
-        }
-    }
-    
-    private fun redirectToLogin() {
-        android.util.Log.d("MainActivity", "redirectToLogin() called - Bypassing login")
-        
-        // Mark user as logged in without actual authentication
-        sharedPref.setLoggedIn(true)
-        
-        Toast.makeText(
-            this,
-            "🎉 Setup complete! Starting ShieldX directly (login bypassed)",
-            Toast.LENGTH_LONG
-        ).show()
-        
-        try {
-            // Go directly to Dashboard instead of Login
-            val intent = Intent(this, com.example.shieldx.activities.DashboardActivity::class.java)
-            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-            android.util.Log.d("MainActivity", "Starting DashboardActivity directly...")
-            startActivity(intent)
-            finish()
-        } catch (e: Exception) {
-            android.util.Log.e("MainActivity", "Error redirecting to login", e)
-            Toast.makeText(this, "Error opening login screen", Toast.LENGTH_SHORT).show()
         }
     }
     
@@ -151,44 +72,27 @@ class MainActivity : ComponentActivity() {
     }
     
     private fun requestNotificationListenerPermission() {
-        android.util.Log.d("MainActivity", "Requesting notification listener permission...")
-        android.util.Log.d("MainActivity", "Current setup completed status: ${sharedPref.isPermissionSetupCompleted()}")
-        isWaitingForListenerPermission = true
         val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
         startActivity(intent)
         Toast.makeText(
             this,
-            "Please enable ShieldX in the Notification Access settings, then return to ShieldX",
+            "Please enable ShieldX in the Notification Access settings",
             Toast.LENGTH_LONG
         ).show()
     }
     
     private fun isNotificationListenerEnabled(): Boolean {
-        // Delegate to the service helper which uses the same check method used by the Service
-        return com.example.shieldx.services.NotificationListenerService.isNotificationServiceEnabled(this)
+        val enabledListeners = Settings.Secure.getString(
+            contentResolver,
+            "enabled_notification_listeners"
+        )
+        val componentName = ComponentName(this, ShieldXNotificationListener::class.java)
+        return enabledListeners?.contains(componentName.flattenToString()) == true
     }
     
     private fun testBackendConnection() {
         ConnectionTester.runAllTests()
         Toast.makeText(this, "Connection test started - check Logcat for results", Toast.LENGTH_SHORT).show()
-    }
-    
-    private fun openDashboard() {
-        val intent = Intent(this, com.example.shieldx.activities.DashboardActivity::class.java)
-        startActivity(intent)
-    }
-    
-    private fun testRedirectToLogin() {
-        android.util.Log.d("MainActivity", "Testing redirect to login...")
-        android.util.Log.d("MainActivity", "Current listener status: ${isNotificationListenerEnabled()}")
-        android.util.Log.d("MainActivity", "Current setup status: ${sharedPref.isPermissionSetupCompleted()}")
-        
-        if (isNotificationListenerEnabled()) {
-            sharedPref.setPermissionSetupCompleted(true)
-            redirectToLogin()
-        } else {
-            Toast.makeText(this, "Please enable notification listener first", Toast.LENGTH_SHORT).show()
-        }
     }
 }
 
@@ -197,44 +101,11 @@ fun ShieldXMainScreen(
     onRequestNotificationPermission: () -> Unit,
     onRequestListenerPermission: () -> Unit,
     isNotificationListenerEnabled: () -> Boolean,
-    onTestConnection: () -> Unit,
-    onOpenDashboard: () -> Unit,
-    onTestRedirect: () -> Unit
+    onTestConnection: () -> Unit
 ) {
     var listenerEnabled by remember { mutableStateOf(isNotificationListenerEnabled()) }
     var isConnected by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    
-    val lifecycleOwner = LocalLifecycleOwner.current
-    
-    // Automatically refresh listener status when the composable is displayed
-    LaunchedEffect(Unit) {
-        listenerEnabled = isNotificationListenerEnabled()
-        android.util.Log.d("MainActivity", "LaunchedEffect - Initial listener status: $listenerEnabled")
-    }
-    
-    // Listen for lifecycle changes and refresh when resuming
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                val previousState = listenerEnabled
-                listenerEnabled = isNotificationListenerEnabled()
-                android.util.Log.d("MainActivity", "Lifecycle ON_RESUME - Previous: $previousState, Current: $listenerEnabled")
-                
-                // If permission was just granted, trigger redirect
-                if (!previousState && listenerEnabled) {
-                    android.util.Log.d("MainActivity", "Permission detected via lifecycle! Triggering redirect...")
-                    onTestRedirect()
-                }
-            }
-        }
-        
-        lifecycleOwner.lifecycle.addObserver(observer)
-        
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
     
     Column(
         modifier = Modifier
@@ -300,47 +171,17 @@ fun ShieldXMainScreen(
                 onClick = onRequestNotificationPermission,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("🛡️ Enable Protection & Continue to Login")
-            }
-            
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            Text(
-                text = "After enabling notification access, you'll be redirected to login",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
-            
-            Spacer(modifier = Modifier.height(12.dp))
-        } else {
-            // Show main app entry button when setup is complete
-            Button(
-                onClick = onOpenDashboard,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("🚀 Open ShieldX Dashboard")
+                Text("Enable Protection")
             }
             
             Spacer(modifier = Modifier.height(12.dp))
         }
         
         OutlinedButton(
-            onClick = { 
-                val previousState = listenerEnabled
-                listenerEnabled = isNotificationListenerEnabled()
-                android.util.Log.d("MainActivity", "Manual refresh - Previous: $previousState, Current: $listenerEnabled")
-                
-                // If permission was just granted, trigger redirect
-                if (!previousState && listenerEnabled) {
-                    android.util.Log.d("MainActivity", "Permission detected via manual refresh! Triggering redirect...")
-                    onTestRedirect()
-                }
-            },
+            onClick = { listenerEnabled = isNotificationListenerEnabled() },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("🔄 Refresh Status & Check Permission")
+            Text("Refresh Status")
         }
         
         Spacer(modifier = Modifier.height(12.dp))
@@ -357,26 +198,6 @@ fun ShieldXMainScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Test Backend Connection")
-        }
-        
-        Spacer(modifier = Modifier.height(8.dp))
-        
-        OutlinedButton(
-            onClick = { 
-                // First refresh the UI state, then test redirect
-                val previousState = listenerEnabled
-                listenerEnabled = isNotificationListenerEnabled()
-                android.util.Log.d("MainActivity", "Test button - Previous: $previousState, Current: $listenerEnabled")
-                
-                if (listenerEnabled) {
-                    onTestRedirect()
-                } else {
-                    android.util.Log.d("MainActivity", "Test button - Permission not enabled yet")
-                }
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("🧪 Test Login Redirect (Debug)")
         }
         
         Spacer(modifier = Modifier.height(32.dp))

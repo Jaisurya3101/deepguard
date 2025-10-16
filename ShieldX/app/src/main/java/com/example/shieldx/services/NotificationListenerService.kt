@@ -157,13 +157,12 @@ class NotificationListenerService : NotificationListenerService() {
     override fun onCreate() {
         super.onCreate()
         
-        // CRITICAL: Initialize service components FIRST before using them
-        initializeService()
-        loadUserPreferences()
-        
-        // Then create notification channel and start foreground service
+        // CRITICAL: Start foreground service immediately to prevent ANR
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, createServiceNotification())
+        
+        initializeService()
+        loadUserPreferences()
         
         Log.i(TAG, "DeepGuard NotificationListenerService created and running in foreground")
     }
@@ -829,14 +828,6 @@ class NotificationListenerService : NotificationListenerService() {
         sharedPref.saveIntValue("threats_detected", threatsDetected)
         sharedPref.saveIntValue("threats_blocked", threatsBlocked)
         sharedPref.saveIntValue("warnings_sent", warningsSent)
-        
-        // Broadcast stats update to listening activities
-        val intent = Intent("com.example.shieldx.STATS_UPDATED")
-        intent.putExtra("notifications_scanned", notificationsScanned)
-        intent.putExtra("threats_detected", threatsDetected)
-        intent.putExtra("threats_blocked", threatsBlocked)
-        intent.putExtra("warnings_sent", warningsSent)
-        sendBroadcast(intent)
     }
     
     // Data classes for analysis results
