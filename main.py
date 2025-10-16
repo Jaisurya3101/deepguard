@@ -86,6 +86,12 @@ async def scan_text(r: ScanRequest):
     a = enhanced_harassment_check(r.text)
     analytics_db["total_scans"] += 1
     if a["is_harassment"]: analytics_db["threats_detected"] += 1
+    
+    # Store recent scan for dashboard/analytics
+    scan_record = {"id": str(uuid.uuid4()), "text": r.text[:100], "is_harassment": a["is_harassment"], "severity": a["severity"], "threat_level": a["threat_level"], "risk_score": int(a["toxic_score"]*100), "timestamp": datetime.now().isoformat(), "keywords": a["keywords"]}
+    analytics_db["recent_scans"].insert(0, scan_record)
+    if len(analytics_db["recent_scans"]) > 50: analytics_db["recent_scans"] = analytics_db["recent_scans"][:50]
+    
     res = {"is_harassment": a["is_harassment"], "confidence": round(a["confidence"], 3), "severity": a["severity"], "threat_level": a["threat_level"], "keywords_detected": a["keywords"], "risk_score": int(a["toxic_score"]*100), "explanation": f"Threat: {a['threat_level']}" if a["is_harassment"] else "Safe"}
     return {"success": True, "message": "Scan complete", "data": res}
 
@@ -98,6 +104,12 @@ async def analyze_notification(p: NotificationPayload):
     a = enhanced_harassment_check(p.content)
     analytics_db["total_scans"] += 1
     if a["is_harassment"]: analytics_db["threats_detected"] += 1
+    
+    # Store recent scan for dashboard/analytics
+    scan_record = {"id": str(uuid.uuid4()), "text": p.content[:100], "sender": p.sender, "is_harassment": a["is_harassment"], "severity": a["severity"], "threat_level": a["threat_level"], "risk_score": int(a["toxic_score"]*100), "timestamp": datetime.now().isoformat(), "keywords": a["keywords"]}
+    analytics_db["recent_scans"].insert(0, scan_record)
+    if len(analytics_db["recent_scans"]) > 50: analytics_db["recent_scans"] = analytics_db["recent_scans"][:50]
+    
     risk = int(a["toxic_score"]*100)
     return {"harassment": {"is_harassment": a["is_harassment"], "confidence": round(a["confidence"], 3), "type": "threat" if a["is_harassment"] else "safe", "severity": a["severity"], "keywords_detected": a["keywords"], "explanation": f"HARASSMENT: {risk}% risk" if a["is_harassment"] else "SAFE"}, "analysis_id": str(uuid.uuid4()), "timestamp": p.timestamp or int(datetime.now().timestamp()*1000), "risk_score": risk, "threat_level": a["threat_level"], "detection_method": "keyword_enhanced"}
 
