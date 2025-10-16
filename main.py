@@ -99,6 +99,52 @@ async def scan_text(r: ScanRequest):
 async def scan_image():
     return {"success": True, "message": "Coming soon", "data": {"is_deepfake": False, "confidence": 0.0}}
 
+@app.get("/api/v1/user/stats")
+async def get_user_stats(authorization: Optional[str] = Header(None), period: str = "week"):
+    """Get user statistics - matches StatsResponse model"""
+    from collections import defaultdict
+    
+    # User stats
+    user_stats = {
+        "total_scans": analytics_db["total_scans"],
+        "harassment_detected": analytics_db["threats_detected"],
+        "deepfakes_detected": 0,
+        "safety_score": round((1 - analytics_db["threats_detected"] / max(analytics_db["total_scans"], 1)) * 100, 1),
+        "last_scan": analytics_db["recent_scans"][0]["timestamp"] if analytics_db["recent_scans"] else None
+    }
+    
+    # Daily stats
+    daily_data = defaultdict(lambda: {"date": "", "scans_count": 0, "harassment_count": 0, "deepfake_count": 0})
+    for scan in analytics_db["recent_scans"]:
+        date = scan["timestamp"].split("T")[0]
+        daily_data[date]["date"] = date
+        daily_data[date]["scans_count"] += 1
+        if scan["is_harassment"]:
+            daily_data[date]["harassment_count"] += 1
+    daily_stats = sorted(daily_data.values(), key=lambda x: x["date"], reverse=True)[:7]
+    
+    # Weekly trend
+    weekly_trend = [{
+        "week": f"Week {i+1}",
+        "risk_level": round((analytics_db["threats_detected"] / max(analytics_db["total_scans"], 1)) * 100, 1),
+        "total_threats": analytics_db["threats_detected"]
+    } for i in range(4)]
+    
+    # Scan summary
+    scan_summary = {
+        "safe_files": analytics_db["total_scans"] - analytics_db["threats_detected"],
+        "ai_generated": 0,
+        "harmful_media": analytics_db["threats_detected"],
+        "last_updated": datetime.now().isoformat()
+    }
+    
+    return {"success": True, "data": {
+        "user_stats": user_stats,
+        "daily_stats": daily_stats,
+        "weekly_trend": weekly_trend,
+        "scan_summary": scan_summary
+    }}
+
 @app.post("/api/v1/mobile/analyze-notification")
 async def analyze_notification(p: NotificationPayload):
     a = enhanced_harassment_check(p.content)
@@ -151,6 +197,109 @@ async def get_stats():
         except: pass
     
     return {"success": True, "data": {"hourly_activity": hourly_data, "top_keywords": [{"keyword": k, "count": c} for k, c in keyword_counts], "total_scans": analytics_db["total_scans"], "threat_percentage": round((analytics_db["threats_detected"] / max(analytics_db["total_scans"], 1)) * 100, 1)}}
+
+@app.get("/api/v1/analytics/dashboard")
+async def get_dashboard_analytics(authorization: Optional[str] = Header(None), days: int = 7):
+    """Dashboard analytics endpoint for Android app - matches StatsResponse model"""
+    from collections import defaultdict
+    
+    # User stats
+    user_stats = {
+        "total_scans": analytics_db["total_scans"],
+        "harassment_detected": analytics_db["threats_detected"],
+        "deepfakes_detected": 0,
+        "safety_score": round((1 - analytics_db["threats_detected"] / max(analytics_db["total_scans"], 1)) * 100, 1),
+        "last_scan": analytics_db["recent_scans"][0]["timestamp"] if analytics_db["recent_scans"] else None
+    }
+    
+    # Daily stats - group by date
+    daily_data = defaultdict(lambda: {"date": "", "scans_count": 0, "harassment_count": 0, "deepfake_count": 0})
+    for scan in analytics_db["recent_scans"]:
+        date = scan["timestamp"].split("T")[0]
+        daily_data[date]["date"] = date
+        daily_data[date]["scans_count"] += 1
+        if scan["is_harassment"]:
+            daily_data[date]["harassment_count"] += 1
+    daily_stats = sorted(daily_data.values(), key=lambda x: x["date"], reverse=True)[:7]
+    
+    # Weekly trend
+    weekly_trend = [{
+        "week": f"Week {i+1}",
+        "risk_level": round((analytics_db["threats_detected"] / max(analytics_db["total_scans"], 1)) * 100, 1),
+        "total_threats": analytics_db["threats_detected"]
+    } for i in range(4)]
+    
+    # Scan summary
+    scan_summary = {
+        "safe_files": analytics_db["total_scans"] - analytics_db["threats_detected"],
+        "ai_generated": 0,
+        "harmful_media": analytics_db["threats_detected"],
+        "last_updated": datetime.now().isoformat()
+    }
+    
+    return {"success": True, "data": {
+        "user_stats": user_stats,
+        "daily_stats": daily_stats,
+        "weekly_trend": weekly_trend,
+        "scan_summary": scan_summary
+    }}
+
+@app.get("/api/v1/analytics/trends")
+async def get_trends(authorization: Optional[str] = Header(None), period: str = "month"):
+    """Weekly/monthly trend data for charts - returns List<WeeklyTrend>"""
+    from collections import defaultdict
+    
+    # Group scans by week
+    weekly_data = defaultdict(lambda: {"week": "", "risk_level": 0.0, "total_threats": 0, "total_scans": 0})
+    for scan in analytics_db["recent_scans"]:
+        # Simplified week grouping - in production use proper datetime
+        date = scan["timestamp"].split("T")[0]
+        week_key = date[:7]  # YYYY-MM as week identifier
+        weekly_data[week_key]["week"] = week_key
+        weekly_data[week_key]["total_scans"] += 1
+        if scan["is_harassment"]:
+            weekly_data[week_key]["total_threats"] += 1
+    
+    # Calculate risk level for each week
+    trends = []
+    for week_data in weekly_data.values():
+        risk_level = round((week_data["total_threats"] / max(week_data["total_scans"], 1)) * 100, 1)
+        trends.append({
+            "week": week_data["week"],
+            "risk_level": risk_level,
+            "total_threats": week_data["total_threats"]
+        })
+    
+    trends = sorted(trends, key=lambda x: x["week"], reverse=True)[:12]
+    return {"success": True, "data": trends}
+
+@app.get("/api/v1/analytics/summary")
+async def get_scan_summary(authorization: Optional[str] = Header(None)):
+    """Scan summary with detailed breakdown - returns ScanSummary"""
+    safe = analytics_db["total_scans"] - analytics_db["threats_detected"]
+    
+    # Threat type breakdown for pie chart
+    harassment_types = {"cyberbullying": 0, "hate_speech": 0, "threats": 0, "profanity": 0}
+    for scan in analytics_db["recent_scans"]:
+        if scan["is_harassment"]:
+            keywords = scan.get("keywords", [])
+            if any(k in ['kill', 'murder', 'die', 'threat'] for k in keywords):
+                harassment_types["threats"] += 1
+            elif any(k in ['hate', 'stupid', 'idiot'] for k in keywords):
+                harassment_types["hate_speech"] += 1
+            elif any(k in ['fuck', 'shit', 'bitch'] for k in keywords):
+                harassment_types["profanity"] += 1
+            else:
+                harassment_types["cyberbullying"] += 1
+    
+    return {"success": True, "data": {
+        "safe_files": safe,
+        "ai_generated": 0,
+        "harmful_media": analytics_db["threats_detected"],
+        "last_updated": datetime.now().isoformat(),
+        "threat_breakdown": harassment_types,
+        "average_risk_score": round(sum(s.get("risk_score", 0) for s in analytics_db["recent_scans"]) / max(len(analytics_db["recent_scans"]), 1), 1)
+    }}
 
 if __name__ == "__main__":
     print("\n" + "="*60)
